@@ -1,0 +1,103 @@
+@APISIX_ADMIN_KEY=edd1c9f034335f136f87ad84b625c8f1
+@GEMINI_API_KEY=GEMINI_API_KEY
+@CLIENT_API_KEY=abcdefghijk2026xyz
+@DEPLOYMENT_NAME=gemini-flash-latest
+
+###
+# PASSO 1: Configurar traces do APISIX para OpenTelemetry
+curl http://127.0.0.1:9180/apisix/admin/plugin_metadata/opentelemetry -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" -X PUT -d '
+{
+    "trace_id_source": "x-request-id",
+    "resource": {
+      "service.name": "APISIX"
+    },
+    "collector": {
+      "address": "alloy:4318",
+      "request_timeout": 3,
+      "request_headers": {
+      }
+    },
+    "batch_span_processor": {
+      "drop_on_queue_full": false,
+      "max_queue_size": 1024,
+      "batch_timeout": 2,
+      "inactive_timeout": 1,
+      "max_export_batch_size": 16
+    },
+    "set_ngx_var": false
+}'
+
+
+###
+# PASSO 2: Criar o Consumer com a API Key do cliente.
+curl "http://127.0.0.1:9180/apisix/admin/consumers" -X PUT \
+  -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" \
+  -d '{
+    "username": "consoleappchatai",
+    "plugins": {
+      "key-auth": {
+        "key": "{{CLIENT_API_KEY}}"
+      }
+    }
+  }'
+
+
+###
+# PASSO 3: Criar a rota exigindo a API Key do cliente.
+curl "http://127.0.0.1:9180/apisix/admin/routes" -X PUT \
+  -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" \
+  -d '{
+    "id": "gemini-testes-flash-latest",
+    "uri": "/gemini-testes/{{DEPLOYMENT_NAME}}/*",
+    "methods": ["POST"],
+    "plugins": {
+      "key-auth": {},
+      "opentelemetry": {
+        "sampler": {
+          "name": "always_on"
+        }
+      },
+      "ai-proxy": {
+        "provider": "gemini",
+        "auth": {
+          "query": {
+            "key": "{{GEMINI_API_KEY}}"
+          },
+          "header": {
+            "Accept-Encoding": "identity"
+          }
+        },
+        "options":{
+          "model": "{{DEPLOYMENT_NAME}}"
+        },
+        "override": {
+          "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/{{DEPLOYMENT_NAME}}:generateContent"
+        }
+      }
+    },
+    "upstream": {
+      "type": "roundrobin",
+      "nodes": {
+        "httpbin.org": 1
+      }
+    }
+  }'
+
+
+###
+# PASSO 4: Testar a rota criada.
+curl http://localhost:9080/gemini-testes/gemini-flash-latest/ \
+  -X POST \
+  -H "apikey: {{CLIENT_API_KEY}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Explique o que é C# em poucas palavras..."
+          }
+        ]
+      }
+    ]
+  }'
